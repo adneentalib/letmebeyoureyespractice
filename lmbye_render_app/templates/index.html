@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>Phone Camera YOLO Detection</title>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -13,12 +14,12 @@
     #container {
       position: relative;
       display: inline-block;
-      max-width: 95vw;
+      width: 95vw;
+      max-width: 700px;
     }
 
     video, canvas {
       width: 100%;
-      max-width: 700px;
       border-radius: 12px;
     }
 
@@ -42,8 +43,16 @@
       margin-top: 10px;
       color: #9ee493;
     }
+
+    #feedback {
+      font-size: 28px;
+      font-weight: bold;
+      margin-top: 18px;
+      color:red; 
+    }
   </style>
 </head>
+
 <body>
   <h1>Detection Camera</h1>
 
@@ -59,54 +68,83 @@
 
   <canvas id="captureCanvas" style="display:none;"></canvas>
 
+  <div id="feedback"></div>
+
   <script>
     const video = document.getElementById("video");
     const overlay = document.getElementById("overlay");
     const overlayCtx = overlay.getContext("2d");
+
     const captureCanvas = document.getElementById("captureCanvas");
     const captureCtx = captureCanvas.getContext("2d");
+
     const statusText = document.getElementById("status");
+    const feedbackText = document.getElementById("feedback");
 
     let stream = null;
     let detectionInterval = null;
+    let isSending = false;
+
+    const TARGET_OBJECT = "mobile phone";
 
     async function startCamera() {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment"
-        },
-        audio: false
-      });
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "environment",
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
+          audio: false
+        });
 
-      video.srcObject = stream;
+        video.srcObject = stream;
 
-      video.onloadedmetadata = () => {
-        overlay.width = video.videoWidth;
-        overlay.height = video.videoHeight;
-        captureCanvas.width = video.videoWidth;
-        captureCanvas.height = video.videoHeight;
+        video.onloadedmetadata = () => {
+          overlay.width = video.videoWidth;
+          overlay.height = video.videoHeight;
 
-        statusText.innerText = "Camera started. Sending frames to Render...";
+          captureCanvas.width = 320;
+          captureCanvas.height = 240;
 
-        detectionInterval = setInterval(sendFrame, 1000);
-      };
+          statusText.innerText = "Camera started. Detecting...";
+          feedbackText.innerText = "";
+
+          if (detectionInterval) {
+            clearInterval(detectionInterval);
+          }
+
+          detectionInterval = setInterval(sendFrame, 1200);
+        };
+      } catch (error) {
+        console.error(error);
+        statusText.innerText = "Could not start camera.";
+      }
     }
 
     function stopDetection() {
       if (detectionInterval) {
         clearInterval(detectionInterval);
+        detectionInterval = null;
       }
 
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
+        stream = null;
       }
 
+      isSending = false;
+
       overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+      feedbackText.innerText = "";
       statusText.innerText = "Stopped.";
     }
 
     async function sendFrame() {
+      if (isSending) return;
       if (!video.videoWidth || !video.videoHeight) return;
+
+      isSending = true;
 
       captureCtx.drawImage(
         video,
@@ -117,8 +155,14 @@
       );
 
       captureCanvas.toBlob(async (blob) => {
+        if (!blob) {
+          isSending = false;
+          return;
+        }
+
         const formData = new FormData();
         formData.append("frame", blob, "frame.jpg");
+        formData.append("object", TARGET_OBJECT);
 
         try {
           const response = await fetch("/detect", {
@@ -127,33 +171,50 @@
           });
 
           const data = await response.json();
-          drawDetections(data.detections || []);
-          statusText.innerText = `Detected ${data.detections.length} object(s)`;
+
+          if (!response.ok) {
+            statusText.innerText = data.error || "Backend error.";
+            isSending = false;
+            return;
+          }
+
+          feedbackText.innerText = data.feedback;
+          drawDetections(data.detections || [], data.width, data.height);
+
+          statusText.innerText = `Detected ${(data.detections || []).length} object(s)`;
         } catch (error) {
           console.error(error);
           statusText.innerText = "Error sending frame to backend.";
+        } finally {
+          isSending = false;
         }
-      }, "image/jpeg", 0.75);
+      }, "image/jpeg", 0.45);
     }
 
-    function drawDetections(detections) {
+    function drawDetections(detections, sourceWidth, sourceHeight) {
       overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+      const scaleX = overlay.width / sourceWidth;
+      const scaleY = overlay.height / sourceHeight;
 
       overlayCtx.lineWidth = 3;
       overlayCtx.font = "18px Arial";
 
       detections.forEach(det => {
         const [x1, y1, x2, y2] = det.box;
-        const w = x2 - x1;
-        const h = y2 - y1;
+
+        const drawX = x1 * scaleX;
+        const drawY = y1 * scaleY;
+        const drawW = (x2 - x1) * scaleX;
+        const drawH = (y2 - y1) * scaleY;
 
         overlayCtx.strokeStyle = "lime";
         overlayCtx.fillStyle = "lime";
 
-        overlayCtx.strokeRect(x1, y1, w, h);
+        overlayCtx.strokeRect(drawX, drawY, drawW, drawH);
 
         const text = `${det.label} ${det.confidence}`;
-        overlayCtx.fillText(text, x1, Math.max(y1 - 8, 20));
+        overlayCtx.fillText(text, drawX, Math.max(drawY - 8, 20));
       });
     }
   </script>
