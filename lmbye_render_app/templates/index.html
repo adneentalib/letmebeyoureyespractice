@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Phone Camera YOLO Detection</title>
+  #
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: #111;
+      color: white;
+    }
+
+    #container {
+      position: relative;
+      display: inline-block;
+      max-width: 95vw;
+    }
+
+    video, canvas {
+      width: 100%;
+      max-width: 700px;
+      border-radius: 12px;
+    }
+
+    #overlay {
+      position: absolute;
+      left: 0;
+      top: 0;
+      pointer-events: none;
+    }
+
+    button {
+      padding: 12px 18px;
+      margin: 10px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+    }
+
+    #status {
+      margin-top: 10px;
+      color: #9ee493;
+    }
+  </style>
+</head>
+<body>
+  <h1>Phone Camera → Render → YOLO OIv7</h1>
+
+  <button onclick="startCamera()">Start Camera</button>
+  <button onclick="stopDetection()">Stop</button>
+
+  <p id="status">Camera not started.</p>
+
+  <div id="container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <canvas id="captureCanvas" style="display:none;"></canvas>
+
+  <script>
+    const video = document.getElementById("video");
+    const overlay = document.getElementById("overlay");
+    const overlayCtx = overlay.getContext("2d");
+    const captureCanvas = document.getElementById("captureCanvas");
+    const captureCtx = captureCanvas.getContext("2d");
+    const statusText = document.getElementById("status");
+
+    let stream = null;
+    let detectionInterval = null;
+
+    async function startCamera() {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment"
+        },
+        audio: false
+      });
+
+      video.srcObject = stream;
+
+      video.onloadedmetadata = () => {
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+        captureCanvas.width = video.videoWidth;
+        captureCanvas.height = video.videoHeight;
+
+        statusText.innerText = "Camera started. Sending frames to Render...";
+
+        detectionInterval = setInterval(sendFrame, 1000);
+      };
+    }
+
+    function stopDetection() {
+      if (detectionInterval) {
+        clearInterval(detectionInterval);
+      }
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+      statusText.innerText = "Stopped.";
+    }
+
+    async function sendFrame() {
+      if (!video.videoWidth || !video.videoHeight) return;
+
+      captureCtx.drawImage(
+        video,
+        0,
+        0,
+        captureCanvas.width,
+        captureCanvas.height
+      );
+
+      captureCanvas.toBlob(async (blob) => {
+        const formData = new FormData();
+        formData.append("frame", blob, "frame.jpg");
+
+        try {
+          const response = await fetch("/detect", {
+            method: "POST",
+            body: formData
+          });
+
+          const data = await response.json();
+          drawDetections(data.detections || []);
+          statusText.innerText = `Detected ${data.detections.length} object(s)`;
+        } catch (error) {
+          console.error(error);
+          statusText.innerText = "Error sending frame to backend.";
+        }
+      }, "image/jpeg", 0.75);
+    }
+
+    function drawDetections(detections) {
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+      overlayCtx.lineWidth = 3;
+      overlayCtx.font = "18px Arial";
+
+      detections.forEach(det => {
+        const [x1, y1, x2, y2] = det.box;
+        const w = x2 - x1;
+        const h = y2 - y1;
+
+        overlayCtx.strokeStyle = "lime";
+        overlayCtx.fillStyle = "lime";
+
+        overlayCtx.strokeRect(x1, y1, w, h);
+
+        const text = `${det.label} ${det.confidence}`;
+        overlayCtx.fillText(text, x1, Math.max(y1 - 8, 20));
+      });
+    }
+  </script>
+</body>
+</html>
