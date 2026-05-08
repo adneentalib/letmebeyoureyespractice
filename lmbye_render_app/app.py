@@ -42,17 +42,21 @@ def detect():
     height, width = frame.shape[:2]
 
     detections = []
-    feedback = "Object not found."
+    feedback = f"{target_object} not found."
+
+    results = None
+    result = None
 
     try:
-        results_generator = model.predict(
+        results = model.predict(
             frame,
-            conf=0.05,
-            verbose=False,
-            stream=True
+            conf=0.25,
+            imgsz=320,
+            max_det=10,
+            verbose=False
         )
 
-        result = next(results_generator)
+        result = results[0]
 
         if result.boxes is not None:
             center_x = width / 2
@@ -86,7 +90,7 @@ def detect():
                     frame_area = width * height
 
                     if box_area > frame_area * 0.35:
-                        feedback = "Object found."
+                        feedback = f"{target_object} found."
                     elif object_center_x < center_x - width * 0.15:
                         feedback = "Move camera right."
                     elif object_center_x > center_x + width * 0.15:
@@ -100,13 +104,19 @@ def detect():
 
                     break
 
-    except StopIteration:
-        feedback = "No prediction result."
     except Exception as e:
         return jsonify({"error": f"YOLO prediction failed: {str(e)}"}), 500
+
     finally:
         del img_array
         del frame
+
+        if results is not None:
+            del results
+
+        if result is not None:
+            del result
+
         gc.collect()
 
     return jsonify({
@@ -119,4 +129,4 @@ def detect():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)

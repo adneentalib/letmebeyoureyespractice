@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Phone Camera YOLO Detection</title>
+  <title>YOLO Object Detection</title>
 
   <style>
     body {
@@ -30,6 +30,15 @@
       pointer-events: none;
     }
 
+    input {
+      padding: 12px;
+      width: 280px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      margin: 10px;
+    }
+
     button {
       padding: 12px 18px;
       margin: 10px;
@@ -48,13 +57,24 @@
       font-size: 28px;
       font-weight: bold;
       margin-top: 18px;
-      color:red; 
+      color: red;
     }
   </style>
 </head>
 
 <body>
   <h1>Detection Camera</h1>
+
+  <p>What object are you looking for?</p>
+
+  <input 
+    id="targetObject" 
+    type="text" 
+    placeholder="Example: mobile phone, glasses"
+    value="mobile phone"
+  />
+
+  <br>
 
   <button onclick="startCamera()">Start Camera</button>
   <button onclick="stopDetection()">Stop</button>
@@ -80,12 +100,15 @@
 
     const statusText = document.getElementById("status");
     const feedbackText = document.getElementById("feedback");
+    const targetInput = document.getElementById("targetObject");
 
     let stream = null;
     let detectionInterval = null;
     let isSending = false;
 
-    const TARGET_OBJECT = "mobile phone";
+    function getTargetObject() {
+      return targetInput.value.trim().toLowerCase() || "mobile phone";
+    }
 
     async function startCamera() {
       try {
@@ -107,14 +130,14 @@
           captureCanvas.width = 320;
           captureCanvas.height = 240;
 
-          statusText.innerText = "Camera started. Detecting...";
+          statusText.innerText = `Camera started. Looking for: ${getTargetObject()}`;
           feedbackText.innerText = "";
 
           if (detectionInterval) {
             clearInterval(detectionInterval);
           }
 
-          detectionInterval = setInterval(sendFrame, 1200);
+          detectionInterval = setInterval(sendFrame, 1800);
         };
       } catch (error) {
         console.error(error);
@@ -162,7 +185,7 @@
 
         const formData = new FormData();
         formData.append("frame", blob, "frame.jpg");
-        formData.append("object", TARGET_OBJECT);
+        formData.append("object", getTargetObject());
 
         try {
           const response = await fetch("/detect", {
@@ -181,14 +204,14 @@
           feedbackText.innerText = data.feedback;
           drawDetections(data.detections || [], data.width, data.height);
 
-          statusText.innerText = `Detected ${(data.detections || []).length} object(s)`;
+          statusText.innerText = `Looking for: ${data.target} | Detected ${(data.detections || []).length} object(s)`;
         } catch (error) {
           console.error(error);
           statusText.innerText = "Error sending frame to backend.";
         } finally {
           isSending = false;
         }
-      }, "image/jpeg", 0.45);
+      }, "image/jpeg", 0.4);
     }
 
     function drawDetections(detections, sourceWidth, sourceHeight) {
