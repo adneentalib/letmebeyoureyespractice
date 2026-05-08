@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>YOLO Object Detection</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: #111;
+      color: white;
+      margin: 0;
+      padding: 20px;
+    }
+
+    #container {
+      position: relative;
+      display: inline-block;
+      width: 95vw;
+      max-width: 700px;
+    }
+
+    video {
+      width: 100%;
+      border-radius: 12px;
+      display: block;
+    }
+
+    #overlay {
+      position: absolute;
+      left: 0;
+      top: 0;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    input {
+      padding: 12px;
+      width: 280px;
+      max-width: 80vw;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      margin: 10px;
+    }
+
+    button {
+      padding: 12px 18px;
+      margin: 10px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+    }
+
+    #status {
+      margin-top: 10px;
+      color: #9ee493;
+    }
+
+    #feedback {
+      font-size: 28px;
+      font-weight: bold;
+      margin-top: 18px;
+      color: red;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Detection Camera</h1>
+
+  <p>What object are you looking for?</p>
+
+  <input
+    id="targetObject"
+    type="text"
+    placeholder="Example: mobile phone, bottle, chair"
+    value="mobile phone"
+  />
+
+  <br>
+
+  <button onclick="startCamera()">Start Camera</button>
+  <button onclick="stopDetection()">Stop</button>
+
+  <p id="status">Camera not started.</p>
+
+  <div id="container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <canvas id="captureCanvas" style="display:none;"></canvas>
+
+  <div id="feedback"></div>
+
+  <script>
+    const video = document.getElementById("video");
+    const overlay = document.getElementById("overlay");
+    const overlayCtx = overlay.getContext("2d");
+
+    const captureCanvas = document.getElementById("captureCanvas");
+    const captureCtx = captureCanvas.getContext("2d");
+
+    const statusText = document.getElementById("status");
+    const feedbackText = document.getElementById("feedback");
+    const targetInput = document.getElementById("targetObject");
+
+    let stream = null;
+    let detectionInterval = null;
+    let isSending = false;
+
+    function getTargetObject() {
+      return targetInput.value.trim().toLowerCase() || "mobile phone";
+    }
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "environment",
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
+          audio: false
+        });
+
+        video.srcObject = stream;
+
+        video.onloadedmetadata = () => {
+          captureCanvas.width = 320;
+          captureCanvas.height = 240;
+
+          resizeOverlay();
+
+          statusText.innerText = `Camera started. Looking for: ${getTargetObject()}`;
+          feedbackText.innerText = "";
+
+          if (detectionInterval) {
+            clearInterval(detectionInterval);
+          }
+
+          detectionInterval = setInterval(sendFrame, 2000);
+        };
+      } catch (error) {
+        console.error(error);
+        statusText.innerText = "Could not start camera.";
+      }
+    }
+
+    function stopDetection() {
+      if (detectionInterval) {
+        clearInterval(detectionInterval);
+        detectionInterval = null;
+      }
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+
+      isSending = false;
+
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+      feedbackText.innerText = "";
+      statusText.innerText = "Stopped.";
+    }
+
+    function resizeOverlay() {
+      const rect = video.getBoundingClientRect();
+
+      overlay.width = rect.width;
+      overlay.height = rect.height;
+
+      overlay.style.width = rect.width + "px";
+      overlay.style.height = rect.height + "px";
+    }
+
+    async function sendFrame() {
+      if (isSending) return;
+      if (!video.videoWidth || !video.videoHeight) return;
+
+      isSending = true;
+
+      captureCtx.drawImage(
+        video,
+        0,
+        0,
+        captureCanvas.width,
+        captureCanvas.height
+      );
+
+      captureCanvas.toBlob(async (blob) => {
+        if (!blob) {
+          isSending = false;
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("frame", blob, "frame.jpg");
+        formData.append("object", getTargetObject());
+
+        try {
+          const response = await fetch("/detect", {
+            method: "POST",
+            body: formData
+          });
+
+          const data = await response.json();
+
+          console.log("Detections:", data.detections);
+
+          if (!response.ok) {
+            statusText.innerText = data.error || "Backend error.";
+            return;
+          }
+
+          feedbackText.innerText = data.feedback;
+          drawDetections(data.detections || [], data.width, data.height);
+
+          statusText.innerText =
+            `Looking for: ${data.target} | Detected ${(data.detections || []).length} object(s)`;
+
+        } catch (error) {
+          console.error(error);
+          statusText.innerText = "Error sending frame to backend.";
+        } finally {
+          isSending = false;
+        }
+      }, "image/jpeg", 0.35);
+    }
+
+    function drawDetections(detections, sourceWidth, sourceHeight) {
+      resizeOverlay();
+
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+      const scaleX = overlay.width / sourceWidth;
+      const scaleY = overlay.height / sourceHeight;
+
+      overlayCtx.lineWidth = 3;
+      overlayCtx.font = "18px Arial";
+      overlayCtx.strokeStyle = "lime";
+      overlayCtx.fillStyle = "lime";
+
+      detections.forEach(det => {
+        const [x1, y1, x2, y2] = det.box;
+
+        const drawX = x1 * scaleX;
+        const drawY = y1 * scaleY;
+        const drawW = (x2 - x1) * scaleX;
+        const drawH = (y2 - y1) * scaleY;
+
+        overlayCtx.strokeRect(drawX, drawY, drawW, drawH);
+
+        const text = `${det.label} ${det.confidence}`;
+
+        overlayCtx.fillText(
+          text,
+          drawX,
+          Math.max(drawY - 10, 20)
+        );
+      });
+    }
+
+    window.addEventListener("resize", resizeOverlay);
+  </script>
+</body>
+</html>
