@@ -43,6 +43,7 @@ def detect():
 
     detections = []
     feedback = f"{target_object} not found."
+    distance_hint = "unknown"
 
     results = None
     result = None
@@ -50,7 +51,7 @@ def detect():
     try:
         results = model.predict(
             frame,
-            conf=0.25,
+            conf=0.05,
             imgsz=320,
             max_det=10,
             verbose=False
@@ -90,17 +91,26 @@ def detect():
                     frame_area = width * height
 
                     if box_area > frame_area * 0.35:
-                        feedback = f"{target_object} found."
-                    elif object_center_x < center_x - width * 0.15:
-                        feedback = "Move camera right."
-                    elif object_center_x > center_x + width * 0.15:
-                        feedback = "Move camera left."
-                    elif object_center_y < center_y - height * 0.15:
-                        feedback = "Tilt camera up."
-                    elif object_center_y > center_y + height * 0.15:
-                        feedback = "Tilt camera down."
+                        distance_hint = "very close"
+                    elif box_area > frame_area * 0.15:
+                        distance_hint = "close"
+                    elif box_area > frame_area * 0.05:
+                        distance_hint = "medium"
                     else:
-                        feedback = "Move forward."
+                        distance_hint = "far"
+
+                    if box_area > frame_area * 0.35:
+                        feedback = f"{target_object} found. Distance: {distance_hint}"
+                    elif object_center_x < center_x - width * 0.15:
+                        feedback = f"Move camera right. Distance: {distance_hint}"
+                    elif object_center_x > center_x + width * 0.15:
+                        feedback = f"Move camera left. Distance: {distance_hint}"
+                    elif object_center_y < center_y - height * 0.15:
+                        feedback = f"Tilt camera up. Distance: {distance_hint}"
+                    elif object_center_y > center_y + height * 0.15:
+                        feedback = f"Tilt camera down. Distance: {distance_hint}"
+                    else:
+                        feedback = f"Move forward. Distance: {distance_hint}"
 
                     break
 
@@ -124,7 +134,8 @@ def detect():
         "target": target_object,
         "detections": detections,
         "width": width,
-        "height": height
+        "height": height,
+        "distance_hint": distance_hint
     })
 
 
